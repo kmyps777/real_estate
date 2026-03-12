@@ -4,574 +4,525 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>부동산 가격 추적기</title>
-
-  <!-- PWA -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="부동산추적" />
   <meta name="theme-color" content="#0A0C0A" />
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icon.png" />
-
-  <!-- 폰트 -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;600&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet" />
-
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0A0C0A; color: #E8F0E8; font-family: 'IBM Plex Mono', monospace; }
-    ::-webkit-scrollbar { width: 3px; }
-    ::-webkit-scrollbar-thumb { background: #2A322A; }
-    #root { min-height: 100vh; }
+    *{box-sizing:border-box;margin:0;padding:0;}
+    body{background:#0A0C0A;color:#E8F0E8;font-family:'IBM Plex Mono',monospace;}
+    ::-webkit-scrollbar{width:3px;}::-webkit-scrollbar-thumb{background:#2A322A;}
+    #root{min-height:100vh;}
+    input,button,textarea{font-family:'Noto Sans KR',sans-serif;outline:none;}
+    input::placeholder,textarea::placeholder{color:#2E3E2E;}
+    .hv:hover{background:rgba(61,220,132,.07)!important;}
+    .cv{cursor:pointer;}.cv:active{opacity:0.75;}
+    @keyframes up{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+    @keyframes ti{from{opacity:0;transform:translate(-50%,8px);}to{opacity:1;transform:translate(-50%,0);}}
+    .page{animation:up .28s ease;}.ta{animation:ti .22s ease;}
+    .tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:3px;background:#1A1F1A;border:1px solid #1E221E;color:#4A584A;font-family:'IBM Plex Mono',monospace;}
+    .mono{font-family:'IBM Plex Mono',monospace;}
+    input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.5) sepia(1) saturate(3) hue-rotate(90deg);}
   </style>
 </head>
 <body>
-  <div id="root"></div>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
 
-  <!-- React + Babel -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+const ACCENT="#3DDC84",ACCENT2="#FF6B6B",BG="#0A0C0A",CARD="#111411",BORDER="#1E221E",TEXT="#E8F0E8",MUTED="#4A584A";
+const STORAGE_KEY="naver_realty_v4";
 
-  <!-- Recharts -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.min.js"></script>
+const today=()=>new Date().toISOString().split("T")[0];
+const fmt=(won)=>{
+  if(!won)return"—";
+  const uk=parseFloat((won/10000).toFixed(2));
+  return `${uk}억`;
+};
+const parseWon=(s)=>{
+  if(!s)return 0;
+  s=s.replace(/[, 억]/g,"").trim();
+  const n=parseFloat(s);
+  if(isNaN(n)||n<=0)return 0;
+  return Math.round(n*10000);
+};
+const parseNaverURL=(url)=>{
+  try{const u=new URL(url);if(!u.hostname.includes("naver"))return null;const m=url.match(/article[Nn]o?[=/](\d+)/);return{articleId:m?.[1]||null};}catch{return null;}
+};
+const latestPrice=(unit)=>unit.prices[unit.prices.length-1]?.price;
+const priceChange=(prices)=>prices.length<2?null:prices[prices.length-1].price-prices[prices.length-2].price;
+const allUnitPrices=(units)=>units.map(u=>latestPrice(u)).filter(Boolean);
 
-  <script type="text/babel">
-    const { useState, useEffect, useRef } = React;
-    const { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } = Recharts;
+const IS=(extra={})=>({background:"#050F05",border:`1px solid ${BORDER}`,borderRadius:6,color:TEXT,...extra});
 
-    /* ─── helpers ─── */
-    const today = () => new Date().toISOString().split("T")[0];
-    const fmt = (won) => {
-      if (!won) return "—";
-      const uk = parseFloat((won / 10000).toFixed(2));
-      return `${uk}억`;
-    };
-    const parseWon = (s) => {
-      if (!s) return 0;
-      s = s.replace(/[, 억]/g, "").trim();
-      const n = parseFloat(s);
-      if (isNaN(n) || n <= 0) return 0;
-      return Math.round(n * 10000);
-    };
-    const parseNaverURL = (url) => {
-      try {
-        const u = new URL(url);
-        if (!u.hostname.includes("naver")) return null;
-        const m = url.match(/article[Nn]o?[=/](\d+)/);
-        return { articleId: m?.[1] || null };
-      } catch { return null; }
-    };
-    const latestPrice = (unit) => unit.prices[unit.prices.length - 1]?.price;
-    const priceChange = (prices) => prices.length < 2 ? null : prices[prices.length - 1].price - prices[prices.length - 2].price;
-    const allUnitPrices = (units) => units.map(u => latestPrice(u)).filter(Boolean);
+// SVG 미니 차트
+function MiniChart({prices}){
+  if(prices.length<2)return null;
+  const W=300,H=100,pad=8;
+  const vals=prices.map(p=>p.price);
+  const mn=Math.min(...vals),mx=Math.max(...vals);
+  const range=mx-mn||1;
+  const x=(i)=>pad+(i/(prices.length-1))*(W-pad*2);
+  const y=(v)=>H-pad-((v-mn)/range)*(H-pad*2);
+  const pts=prices.map((p,i)=>`${x(i)},${y(p.price)}`).join(" ");
+  const first=prices[0].price,last=prices[prices.length-1].price;
+  const color=last>=first?ACCENT:ACCENT2;
+  return(
+    <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:120,display:"block"}}>
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
+      {prices.map((p,i)=>(
+        <circle key={i} cx={x(i)} cy={y(p.price)} r="3" fill={color}/>
+      ))}
+      <line x1={pad} y1={y(first)} x2={W-pad} y2={y(first)} stroke={BORDER} strokeDasharray="4 3"/>
+    </svg>
+  );
+}
 
-    const ACCENT = "#3DDC84", ACCENT2 = "#FF6B6B";
-    const BG = "#0A0C0A", CARD = "#111411", BORDER = "#1E221E", TEXT = "#E8F0E8", MUTED = "#4A584A";
-    const STORAGE_KEY = "naver_realty_v4";
+function useInlineEdit(initial,onSave){
+  const[editing,setEditing]=useState(false);
+  const[val,setVal]=useState(initial);
+  const start=(v)=>{setVal(v??initial);setEditing(true);};
+  const save=()=>{if(val.trim())onSave(val.trim());setEditing(false);};
+  const cancel=()=>setEditing(false);
+  return{editing,val,setVal,start,save,cancel};
+}
 
-    const IS = (extra = {}) => ({ background:"#050F05", border:`1px solid ${BORDER}`, borderRadius:6, color:TEXT, ...extra });
-
-    const CustomTooltip = ({ active, payload }) => {
-      if (!active || !payload?.length) return null;
-      const d = payload[0].payload;
-      return (
-        <div style={{ background:"#1A1F1A", border:`1px solid ${BORDER}`, borderRadius:8, padding:"10px 14px", fontSize:12 }}>
-          <div style={{ color:MUTED, marginBottom:4 }}>{d.date}</div>
-          <div style={{ color:ACCENT, fontWeight:700, fontSize:15 }}>{fmt(d.price)}</div>
-          {d.note && <div style={{ color:"#888", marginTop:3 }}>{d.note}</div>}
+function AddForm({title,fields,onAdd,onCancel}){
+  const[vals,setVals]=useState(()=>Object.fromEntries(fields.map(f=>[f.key,""])));
+  const set=(k,v)=>setVals(p=>({...p,[k]:v}));
+  const canAdd=fields.filter(f=>f.required).every(f=>vals[f.key].trim());
+  return(
+    <div style={{background:"#0D2010",border:`1px solid ${ACCENT}44`,borderRadius:8,padding:"16px 18px",marginBottom:12}}>
+      <div style={{fontSize:10,color:ACCENT,letterSpacing:"0.15em",marginBottom:12,fontFamily:"'IBM Plex Mono',monospace"}}>{title}</div>
+      <div style={{display:"flex",flexDirection:"column",gap:8}}>
+        {fields.map(f=>(
+          <div key={f.key}>
+            <input value={vals[f.key]} onChange={e=>set(f.key,e.target.value)}
+              onKeyDown={e=>e.key==="Enter"&&canAdd&&onAdd(vals)}
+              placeholder={f.placeholder}
+              style={{...IS({padding:"10px 12px",fontSize:f.large?14:13,width:"100%"})}}/>
+            {f.preview&&vals[f.key]&&parseWon(vals[f.key])>0&&(
+              <div style={{fontSize:11,color:ACCENT,marginTop:4,fontFamily:"'IBM Plex Mono',monospace"}}>= {fmt(parseWon(vals[f.key]))}</div>
+            )}
+          </div>
+        ))}
+        <div style={{display:"flex",gap:8}}>
+          <button onClick={()=>canAdd&&onAdd(vals)} disabled={!canAdd}
+            style={{flex:1,background:canAdd?ACCENT:"#1A231A",color:canAdd?"#050F05":MUTED,padding:"10px",borderRadius:6,fontSize:13,fontWeight:700,border:"none",cursor:canAdd?"pointer":"default"}}>추가</button>
+          <button onClick={onCancel} style={{padding:"10px 16px",borderRadius:6,fontSize:13,background:"none",border:`1px solid ${BORDER}`,color:MUTED,cursor:"pointer"}}>취소</button>
         </div>
-      );
-    };
+      </div>
+    </div>
+  );
+}
 
-    function useInlineEdit(initial, onSave) {
-      const [editing, setEditing] = useState(false);
-      const [val, setVal] = useState(initial);
-      const start = (v) => { setVal(v ?? initial); setEditing(true); };
-      const save = () => { if (val.trim()) { onSave(val.trim()); } setEditing(false); };
-      const cancel = () => setEditing(false);
-      return { editing, val, setVal, start, save, cancel };
-    }
+function InlineInput({val,setVal,onSave,onCancel}){
+  return(
+    <div style={{display:"flex",gap:6}}>
+      <input autoFocus value={val} onChange={e=>setVal(e.target.value)}
+        onKeyDown={e=>{if(e.key==="Enter")onSave();if(e.key==="Escape")onCancel();}}
+        style={{flex:1,...IS({padding:"6px 10px",fontSize:14,fontWeight:600}),border:`2px solid ${ACCENT}`}}/>
+      <button onClick={onSave} style={{background:ACCENT,color:"#050F05",border:"none",borderRadius:5,padding:"6px 12px",fontWeight:700,fontSize:12,cursor:"pointer"}}>저장</button>
+      <button onClick={onCancel} style={{background:"none",border:`1px solid ${BORDER}`,borderRadius:5,padding:"6px 10px",color:MUTED,fontSize:12,cursor:"pointer"}}>취소</button>
+    </div>
+  );
+}
+function EditBtn({onClick,label}){return<button onClick={onClick} style={{fontSize:11,background:"none",color:MUTED,padding:"2px 7px",borderRadius:4,border:`1px solid ${BORDER}`,cursor:"pointer"}}>{label}</button>;}
+function DelBtn({onClick,label}){return<button onClick={onClick} style={{fontSize:11,background:"none",color:MUTED,padding:"4px 8px",borderRadius:4,border:`1px solid ${BORDER}`,flexShrink:0,cursor:"pointer"}}>{label}</button>;}
+function Empty({icon,msg,sub}){return<div style={{textAlign:"center",paddingTop:60,color:MUTED}}><div style={{fontSize:28,marginBottom:10}}>{icon}</div><div style={{fontSize:13}}>{msg}</div>{sub&&<div style={{fontSize:12,marginTop:4,color:"#2A3A2A"}}>{sub}</div>}</div>;}
 
-    function AddForm({ title, fields, onAdd, onCancel }) {
-      const [vals, setVals] = useState(() => Object.fromEntries(fields.map(f => [f.key, ""])));
-      const set = (k, v) => setVals(p => ({ ...p, [k]: v }));
-      const canAdd = fields.filter(f => f.required).every(f => vals[f.key].trim());
-      return (
-        <div style={{ background:"#0D2010", border:`1px solid ${ACCENT}44`, borderRadius:8, padding:"16px 18px", marginBottom:12 }}>
-          <div style={{ fontSize:10, color:ACCENT, letterSpacing:"0.15em", marginBottom:12, fontFamily:"'IBM Plex Mono',monospace" }}>{title}</div>
-          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-            {fields.map(f => (
-              <div key={f.key}>
-                <input value={vals[f.key]} onChange={e => set(f.key, e.target.value)}
-                  onKeyDown={e => e.key === "Enter" && canAdd && onAdd(vals)}
-                  placeholder={f.placeholder}
-                  style={{ ...IS({ padding:"10px 12px", fontSize: f.large ? 14 : 13, width:"100%" }) }} />
-                {f.preview && vals[f.key] && parseWon(vals[f.key]) > 0 && (
-                  <div style={{ fontSize:11, color:ACCENT, marginTop:4, fontFamily:"'IBM Plex Mono',monospace" }}>= {fmt(parseWon(vals[f.key]))}</div>
-                )}
-              </div>
-            ))}
-            <div style={{ display:"flex", gap:8 }}>
-              <button onClick={() => canAdd && onAdd(vals)} disabled={!canAdd}
-                style={{ flex:1, background:canAdd?ACCENT:"#1A231A", color:canAdd?"#050F05":MUTED, padding:"10px", borderRadius:6, fontSize:13, fontWeight:700, border:"none", cursor:canAdd?"pointer":"default" }}>추가</button>
-              <button onClick={onCancel}
-                style={{ padding:"10px 16px", borderRadius:6, fontSize:13, background:"none", border:`1px solid ${BORDER}`, color:MUTED, cursor:"pointer" }}>취소</button>
-            </div>
+function App(){
+  const[apts,setApts]=useState([]);
+  const[loaded,setLoaded]=useState(false);
+  const[view,setView]=useState("apt");
+  const[selAptId,setSelAptId]=useState(null);
+  const[selBldId,setSelBldId]=useState(null);
+  const[selUnitId,setSelUnitId]=useState(null);
+  const[toast,setToast]=useState("");
+  const[showAddApt,setShowAddApt]=useState(false);
+  const[showAddBld,setShowAddBld]=useState(false);
+  const[showAddUnit,setShowAddUnit]=useState(false);
+  const[confirmDel,setConfirmDel]=useState(null);
+  const[editingArea,setEditingArea]=useState(false);
+  const[editAreaVal,setEditAreaVal]=useState("");
+  const[priceVal,setPriceVal]=useState("");
+  const[priceDate,setPriceDate]=useState(today());
+  const[priceNote,setPriceNote]=useState("");
+  const priceRef=useRef(null);
+
+  useEffect(()=>{
+    try{
+      const s4=localStorage.getItem(STORAGE_KEY);
+      if(s4){const d=JSON.parse(s4);if(d.length>0){setApts(d);setLoaded(true);return;}}
+      const s3=localStorage.getItem("naver_realty_v3");
+      if(s3){
+        const groups=JSON.parse(s3);
+        setApts([{id:Date.now().toString(),name:"내 아파트",address:"",createdAt:"",
+          buildings:groups.map(g=>({id:g.id,name:g.name,createdAt:g.createdAt||"",
+            units:(g.units||[]).map(u=>({id:u.id,name:u.name,area:u.area||"",url:u.url||"",articleId:u.articleId||null,prices:u.prices||[],createdAt:u.createdAt||""}))}))}]);
+        setLoaded(true);return;
+      }
+    }catch{}
+    setLoaded(true);
+  },[]);
+
+  useEffect(()=>{
+    if(loaded&&apts.length>0)try{localStorage.setItem(STORAGE_KEY,JSON.stringify(apts));}catch{}
+  },[apts,loaded]);
+
+  const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2400);};
+  const selApt=apts.find(a=>a.id===selAptId);
+  const selBld=selApt?.buildings.find(b=>b.id===selBldId);
+  const selUnit=selBld?.units.find(u=>u.id===selUnitId);
+  const updApts=(fn)=>setApts(fn);
+
+  const addApt=({name,address})=>{updApts(p=>[{id:Date.now().toString(),name:name.trim(),address:address.trim(),buildings:[],createdAt:today()},...p]);setShowAddApt(false);showToast("✓ 아파트가 추가되었습니다");};
+  const delApt=(id)=>setConfirmDel({msg:`"${apts.find(a=>a.id===id)?.name}" 아파트를 삭제할까요?\n하위 동·호수 데이터가 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.filter(a=>a.id!==id));setView("apt");showToast("삭제되었습니다");}});
+  const renameApt=(name)=>{updApts(p=>p.map(a=>a.id===selAptId?{...a,name}:a));showToast("✓ 수정되었습니다");};
+
+  const addBld=({name})=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:[...a.buildings,{id:Date.now().toString(),name:name.trim(),units:[],createdAt:today()}]}));setShowAddBld(false);showToast("✓ 동이 추가되었습니다");};
+  const delBld=(id)=>setConfirmDel({msg:`"${selApt?.buildings.find(b=>b.id===id)?.name}"을 삭제할까요?\n하위 호수 데이터가 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.filter(b=>b.id!==id)}));setView("building");showToast("삭제되었습니다");}});
+  const renameBld=(name)=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id===selBldId?{...b,name}:b)}));showToast("✓ 수정되었습니다");};
+
+  const addUnit=({name,area,url,initPrice})=>{
+    const parsed=parseNaverURL(url);const prices=[];const p0=parseWon(initPrice);
+    if(p0)prices.push({date:today(),price:p0,note:"초기가"});
+    const u={id:Date.now().toString(),name:name.trim(),area:area.trim(),url:url.trim(),articleId:parsed?.articleId||null,prices,createdAt:today()};
+    updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:[...b.units,u]})}));
+    setShowAddUnit(false);showToast("✓ 호수가 추가되었습니다");
+  };
+  const delUnit=(id)=>setConfirmDel({msg:`"${selBld?.units.find(u=>u.id===id)?.name}"을 삭제할까요?\n가격 기록이 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.filter(u=>u.id!==id)})}));setView("unit");showToast("삭제되었습니다");}});
+  const renameUnit=(name)=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id===selUnitId?{...u,name}:u)})}));showToast("✓ 수정되었습니다");};
+  const saveArea=()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id===selUnitId?{...u,area:editAreaVal.trim()}:u)})}));setEditingArea(false);showToast("✓ 수정되었습니다");};
+
+  const addPrice=()=>{
+    const val=parseWon(priceVal);if(!val)return;
+    updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id!==selUnitId?u:{...u,prices:[...u.prices,{date:priceDate,price:val,note:priceNote}].sort((a,b)=>a.date.localeCompare(b.date))})})}));
+    setPriceVal("");setPriceNote("");setPriceDate(today());
+    showToast("✓ 가격이 기록되었습니다");priceRef.current?.focus();
+  };
+  const delPrice=(idx)=>updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id!==selUnitId?u:{...u,prices:u.prices.filter((_,i)=>i!==idx)})})}));
+
+  const goApt=(id)=>{setSelAptId(id);setView("building");setShowAddBld(false);};
+  const goBld=(id)=>{setSelBldId(id);setView("unit");setShowAddUnit(false);};
+  const goUnit=(id)=>{setSelUnitId(id);setView("unit_detail");setPriceDate(today());setEditingArea(false);};
+
+  const aptEdit=useInlineEdit(selApt?.name,renameApt);
+  const bldEdit=useInlineEdit(selBld?.name,renameBld);
+  const unitEdit=useInlineEdit(selUnit?.name,renameUnit);
+
+  const priceRange=(units)=>{
+    const ps=allUnitPrices(units);if(!ps.length)return null;
+    const mn=Math.min(...ps),mx=Math.max(...ps);
+    return mn===mx?fmt(mn):`${fmt(mn)} ~ ${fmt(mx)}`;
+  };
+
+  return(
+    <div style={{fontFamily:"'IBM Plex Mono',monospace",background:BG,minHeight:"100vh",color:TEXT}}>
+
+      {/* NAV */}
+      <nav style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",height:52,borderBottom:`1px solid ${BORDER}`,position:"sticky",top:0,background:BG,zIndex:200}}>
+        <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0,flex:1}}>
+          {view!=="apt"&&(
+            <button onClick={()=>{if(view==="building")setView("apt");else if(view==="unit")setView("building");else if(view==="unit_detail")setView("unit");}}
+              style={{background:"none",color:MUTED,fontSize:18,padding:"4px 8px 4px 0",border:"none",cursor:"pointer",flexShrink:0}}>←</button>
+          )}
+          <div style={{display:"flex",alignItems:"center",gap:4,fontSize:11,letterSpacing:"0.12em",color:MUTED,fontFamily:"'IBM Plex Mono',monospace",textTransform:"uppercase",minWidth:0,overflow:"hidden"}}>
+            {view==="apt"&&<span>부동산 추적기</span>}
+            {view==="building"&&<span style={{color:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selApt?.name}</span>}
+            {view==="unit"&&<><span style={{cursor:"pointer"}} onClick={()=>setView("building")}>{selApt?.name}</span><span style={{color:"#2A3A2A"}}>›</span><span style={{color:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selBld?.name}</span></>}
+            {view==="unit_detail"&&<><span style={{cursor:"pointer"}} onClick={()=>setView("building")}>{selApt?.name}</span><span style={{color:"#2A3A2A"}}>›</span><span style={{cursor:"pointer"}} onClick={()=>setView("unit")}>{selBld?.name}</span><span style={{color:"#2A3A2A"}}>›</span><span style={{color:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selUnit?.name}</span></>}
           </div>
         </div>
-      );
-    }
-
-    function InlineInput({ val, setVal, onSave, onCancel }) {
-      return (
-        <div style={{ display:"flex", gap:6 }}>
-          <input autoFocus value={val} onChange={e => setVal(e.target.value)}
-            onKeyDown={e => { if(e.key==="Enter") onSave(); if(e.key==="Escape") onCancel(); }}
-            style={{ flex:1, ...IS({ padding:"6px 10px", fontSize:14, fontWeight:600 }), border:`2px solid ${ACCENT}` }} />
-          <button onClick={onSave} style={{ background:ACCENT, color:"#050F05", border:"none", borderRadius:5, padding:"6px 12px", fontWeight:700, fontSize:12, cursor:"pointer" }}>저장</button>
-          <button onClick={onCancel} style={{ background:"none", border:`1px solid ${BORDER}`, borderRadius:5, padding:"6px 10px", color:MUTED, fontSize:12, cursor:"pointer" }}>취소</button>
+        <div style={{flexShrink:0,marginLeft:12}}>
+          {view==="apt"&&<button onClick={()=>setShowAddApt(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 아파트</button>}
+          {view==="building"&&<button onClick={()=>setShowAddBld(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 동</button>}
+          {view==="unit"&&<button onClick={()=>setShowAddUnit(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 호수</button>}
         </div>
-      );
-    }
+      </nav>
 
-    function EditBtn({ onClick, label }) {
-      return (
-        <button onClick={onClick} style={{ fontSize:11, background:"none", color:MUTED, padding:"2px 7px", borderRadius:4, border:`1px solid ${BORDER}`, cursor:"pointer" }}>
-          {label}
-        </button>
-      );
-    }
+      <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px 60px"}}>
 
-    function DelBtn({ onClick, label }) {
-      return (
-        <button onClick={onClick} style={{ fontSize:11, background:"none", color:MUTED, padding:"4px 8px", borderRadius:4, border:`1px solid ${BORDER}`, flexShrink:0, cursor:"pointer" }}>
-          {label}
-        </button>
-      );
-    }
+        {/* APT LIST */}
+        {view==="apt"&&(
+          <div className="page">
+            {showAddApt&&<AddForm title="새 아파트 추가" onCancel={()=>setShowAddApt(false)} onAdd={addApt} fields={[{key:"name",placeholder:"예: 래미안 반포",required:true,large:true},{key:"address",placeholder:"주소 (선택)"}]}/>}
+            {apts.length===0?(
+              <div style={{textAlign:"center",paddingTop:80}}>
+                <div style={{fontSize:38,marginBottom:12}}>🏙️</div>
+                <div style={{fontSize:11,letterSpacing:"0.2em",color:MUTED,marginBottom:8}}>NO APARTMENTS</div>
+                <div style={{fontSize:13,color:MUTED}}>아파트를 추가하고 동·호수별 가격을 추적하세요</div>
+              </div>
+            ):apts.map(apt=>{
+              const allUnits=apt.buildings.flatMap(b=>b.units);
+              const range=priceRange(allUnits);
+              return(
+                <div key={apt.id} className="cv" onClick={()=>goApt(apt.id)}
+                  style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"16px 18px",marginBottom:10}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                    <div>
+                      <div style={{fontSize:16,fontWeight:700,marginBottom:6,fontFamily:"'Noto Sans KR',sans-serif"}}>{apt.name}</div>
+                      <div style={{display:"flex",gap:6}}>
+                        {apt.address&&<span className="tag">{apt.address}</span>}
+                        <span className="tag">{apt.buildings.length}개 동</span>
+                        <span className="tag">{allUnits.length}개 호수</span>
+                      </div>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      {range?<div className="mono" style={{fontSize:14,fontWeight:700,color:ACCENT}}>{range}</div>:<div style={{fontSize:12,color:MUTED}}>미입력</div>}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
-    function Empty({ icon, msg, sub }) {
-      return (
-        <div style={{ textAlign:"center", paddingTop:60, color:MUTED }}>
-          <div style={{ fontSize:28, marginBottom:10 }}>{icon}</div>
-          <div style={{ fontSize:13 }}>{msg}</div>
-          {sub && <div style={{ fontSize:12, marginTop:4, color:"#2A3A2A" }}>{sub}</div>}
-        </div>
-      );
-    }
-
-    function App() {
-      const [apts, setApts] = useState([]);
-      const [loaded, setLoaded] = useState(false);
-      const [view, setView] = useState("apt");
-      const [selAptId, setSelAptId] = useState(null);
-      const [selBldId, setSelBldId] = useState(null);
-      const [selUnitId, setSelUnitId] = useState(null);
-      const [toast, setToast] = useState("");
-      const [showAddApt, setShowAddApt] = useState(false);
-      const [showAddBld, setShowAddBld] = useState(false);
-      const [showAddUnit, setShowAddUnit] = useState(false);
-      const [confirmDel, setConfirmDel] = useState(null);
-      const [editingArea, setEditingArea] = useState(false);
-      const [editAreaVal, setEditAreaVal] = useState("");
-      const [priceVal, setPriceVal] = useState("");
-      const [priceDate, setPriceDate] = useState(today());
-      const [priceNote, setPriceNote] = useState("");
-      const priceRef = useRef(null);
-
-      useEffect(() => {
-        try {
-          const s4 = localStorage.getItem(STORAGE_KEY);
-          if (s4) { const d = JSON.parse(s4); if (d.length > 0) { setApts(d); setLoaded(true); return; } }
-          const s3 = localStorage.getItem("naver_realty_v3");
-          if (s3) {
-            const groups = JSON.parse(s3);
-            setApts([{ id: Date.now().toString(), name: "내 아파트", address: "", createdAt: "",
-              buildings: groups.map(g => ({ id: g.id, name: g.name, createdAt: g.createdAt||"",
-                units: (g.units||[]).map(u => ({ id: u.id, name: u.name, area: u.area||"", url: u.url||"", articleId: u.articleId||null, prices: u.prices||[], createdAt: u.createdAt||"" })) })) }]);
-            setLoaded(true); return;
-          }
-        } catch {}
-        setLoaded(true);
-      }, []);
-
-      useEffect(() => {
-        if (loaded && apts.length > 0) try { localStorage.setItem(STORAGE_KEY, JSON.stringify(apts)); } catch {}
-      }, [apts, loaded]);
-
-      const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(""), 2400); };
-      const selApt = apts.find(a => a.id === selAptId);
-      const selBld = selApt?.buildings.find(b => b.id === selBldId);
-      const selUnit = selBld?.units.find(u => u.id === selUnitId);
-      const updApts = (fn) => setApts(fn);
-
-      const addApt = ({ name, address }) => { updApts(p => [{ id: Date.now().toString(), name: name.trim(), address: address.trim(), buildings: [], createdAt: today() }, ...p]); setShowAddApt(false); showToast("✓ 아파트가 추가되었습니다"); };
-      const delApt = (id) => setConfirmDel({ msg:`"${apts.find(a=>a.id===id)?.name}" 아파트를 삭제할까요?\n하위 동·호수 데이터가 모두 삭제됩니다.`, onConfirm: () => { updApts(p => p.filter(a => a.id !== id)); setView("apt"); showToast("삭제되었습니다"); }});
-      const renameApt = (name) => { updApts(p => p.map(a => a.id === selAptId ? { ...a, name } : a)); showToast("✓ 수정되었습니다"); };
-
-      const addBld = ({ name }) => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: [...a.buildings, { id: Date.now().toString(), name: name.trim(), units: [], createdAt: today() }] })); setShowAddBld(false); showToast("✓ 동이 추가되었습니다"); };
-      const delBld = (id) => setConfirmDel({ msg:`"${selApt?.buildings.find(b=>b.id===id)?.name}"을 삭제할까요?\n하위 호수 데이터가 모두 삭제됩니다.`, onConfirm: () => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.filter(b => b.id !== id) })); setView("building"); showToast("삭제되었습니다"); }});
-      const renameBld = (name) => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id === selBldId ? { ...b, name } : b) })); showToast("✓ 수정되었습니다"); };
-
-      const addUnit = ({ name, area, url, initPrice }) => {
-        const parsed = parseNaverURL(url);
-        const prices = [];
-        const p0 = parseWon(initPrice);
-        if (p0) prices.push({ date: today(), price: p0, note: "초기가" });
-        const u = { id: Date.now().toString(), name: name.trim(), area: area.trim(), url: url.trim(), articleId: parsed?.articleId||null, prices, createdAt: today() };
-        updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: [...b.units, u] }) }));
-        setShowAddUnit(false); showToast("✓ 호수가 추가되었습니다");
-      };
-      const delUnit = (id) => setConfirmDel({ msg:`"${selBld?.units.find(u=>u.id===id)?.name}"을 삭제할까요?\n가격 기록이 모두 삭제됩니다.`, onConfirm: () => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: b.units.filter(u => u.id !== id) }) })); setView("unit"); showToast("삭제되었습니다"); }});
-      const renameUnit = (name) => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: b.units.map(u => u.id === selUnitId ? { ...u, name } : u) }) })); showToast("✓ 수정되었습니다"); };
-      const saveArea = () => { updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: b.units.map(u => u.id === selUnitId ? { ...u, area: editAreaVal.trim() } : u) }) })); setEditingArea(false); showToast("✓ 수정되었습니다"); };
-
-      const addPrice = () => {
-        const val = parseWon(priceVal); if (!val) return;
-        updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: b.units.map(u => u.id !== selUnitId ? u : { ...u, prices: [...u.prices, { date: priceDate, price: val, note: priceNote }].sort((a,b) => a.date.localeCompare(b.date)) }) }) }));
-        setPriceVal(""); setPriceNote(""); setPriceDate(today());
-        showToast("✓ 가격이 기록되었습니다"); priceRef.current?.focus();
-      };
-      const delPrice = (idx) => updApts(p => p.map(a => a.id !== selAptId ? a : { ...a, buildings: a.buildings.map(b => b.id !== selBldId ? b : { ...b, units: b.units.map(u => u.id !== selUnitId ? u : { ...u, prices: u.prices.filter((_,i) => i !== idx) }) }) }));
-
-      const goApt = (id) => { setSelAptId(id); setView("building"); setShowAddBld(false); };
-      const goBld = (id) => { setSelBldId(id); setView("unit"); setShowAddUnit(false); };
-      const goUnit = (id) => { setSelUnitId(id); setView("unit_detail"); setPriceDate(today()); setEditingArea(false); };
-
-      const aptEdit = useInlineEdit(selApt?.name, renameApt);
-      const bldEdit = useInlineEdit(selBld?.name, renameBld);
-      const unitEdit = useInlineEdit(selUnit?.name, renameUnit);
-
-      const priceRange = (units) => {
-        const ps = allUnitPrices(units);
-        if (!ps.length) return null;
-        const mn = Math.min(...ps), mx = Math.max(...ps);
-        return mn === mx ? fmt(mn) : `${fmt(mn)} ~ ${fmt(mx)}`;
-      };
-
-      return (
-        <div style={{ fontFamily:"'IBM Plex Mono',monospace", background:BG, minHeight:"100vh", color:TEXT }}>
-          <style>{`
-            input,textarea,button{font-family:'Noto Sans KR',sans-serif;outline:none;}
-            input::placeholder,textarea::placeholder{color:#2E3E2E;}
-            .hv:hover{background:rgba(61,220,132,.07)!important;}
-            .cv{cursor:pointer;} .cv:active{opacity:0.7;}
-            @keyframes up{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
-            @keyframes ti{from{opacity:0;transform:translate(-50%,8px);}to{opacity:1;transform:translate(-50%,0);}}
-            .page{animation:up .28s ease;} .ta{animation:ti .22s ease;}
-            .tag{display:inline-block;font-size:10px;padding:2px 7px;border-radius:3px;background:#1A1F1A;border:1px solid ${BORDER};color:${MUTED};font-family:'IBM Plex Mono',monospace;}
-            input[type=date]::-webkit-calendar-picker-indicator{filter:invert(.5) sepia(1) saturate(3) hue-rotate(90deg);}
-            .mono{font-family:'IBM Plex Mono',monospace;}
-          `}</style>
-
-          {/* NAV */}
-          <nav style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"0 20px", height:52, borderBottom:`1px solid ${BORDER}`, position:"sticky", top:0, background:BG, zIndex:200 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:4, minWidth:0, flex:1 }}>
-              {view !== "apt" && (
-                <button onClick={() => { if(view==="building") setView("apt"); else if(view==="unit") setView("building"); else if(view==="unit_detail") setView("unit"); }}
-                  style={{ background:"none", color:MUTED, fontSize:18, padding:"4px 8px 4px 0", border:"none", cursor:"pointer", flexShrink:0 }}>←</button>
-              )}
-              <div style={{ display:"flex", alignItems:"center", gap:4, fontSize:11, letterSpacing:"0.12em", color:MUTED, fontFamily:"'IBM Plex Mono',monospace", textTransform:"uppercase", minWidth:0, overflow:"hidden" }}>
-                {view==="apt" && <span>부동산 추적기</span>}
-                {view==="building" && <span style={{ color:TEXT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{selApt?.name}</span>}
-                {view==="unit" && <><span style={{ cursor:"pointer" }} onClick={() => setView("building")}>{selApt?.name}</span><span style={{ color:"#2A3A2A" }}>›</span><span style={{ color:TEXT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{selBld?.name}</span></>}
-                {view==="unit_detail" && <><span style={{ cursor:"pointer" }} onClick={() => setView("building")}>{selApt?.name}</span><span style={{ color:"#2A3A2A" }}>›</span><span style={{ cursor:"pointer" }} onClick={() => setView("unit")}>{selBld?.name}</span><span style={{ color:"#2A3A2A" }}>›</span><span style={{ color:TEXT, whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis" }}>{selUnit?.name}</span></>}
+        {/* BUILDING LIST */}
+        {view==="building"&&selApt&&(
+          <div className="page">
+            <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"12px 16px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1,minWidth:0,marginRight:10}}>
+                  {aptEdit.editing?<InlineInput val={aptEdit.val} setVal={aptEdit.setVal} onSave={aptEdit.save} onCancel={aptEdit.cancel}/>:(
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      {selApt.address&&<span className="tag">{selApt.address}</span>}
+                      <EditBtn onClick={()=>aptEdit.start(selApt.name)} label="이름 수정"/>
+                    </div>
+                  )}
+                </div>
+                <DelBtn onClick={()=>delApt(selApt.id)} label="삭제"/>
               </div>
             </div>
-            <div style={{ flexShrink:0, marginLeft:12 }}>
-              {view==="apt" && <button onClick={() => setShowAddApt(v => !v)} style={{ background:ACCENT, color:"#050F05", fontSize:12, fontWeight:700, padding:"6px 14px", borderRadius:4, border:"none", cursor:"pointer" }}>+ 아파트</button>}
-              {view==="building" && <button onClick={() => setShowAddBld(v => !v)} style={{ background:ACCENT, color:"#050F05", fontSize:12, fontWeight:700, padding:"6px 14px", borderRadius:4, border:"none", cursor:"pointer" }}>+ 동</button>}
-              {view==="unit" && <button onClick={() => setShowAddUnit(v => !v)} style={{ background:ACCENT, color:"#050F05", fontSize:12, fontWeight:700, padding:"6px 14px", borderRadius:4, border:"none", cursor:"pointer" }}>+ 호수</button>}
-            </div>
-          </nav>
-
-          <div style={{ maxWidth:640, margin:"0 auto", padding:"20px 16px 60px" }}>
-
-            {/* APT LIST */}
-            {view==="apt" && (
-              <div className="page">
-                {showAddApt && <AddForm title="새 아파트 추가" onCancel={() => setShowAddApt(false)} onAdd={addApt} fields={[{ key:"name", placeholder:"예: 래미안 반포", required:true, large:true },{ key:"address", placeholder:"주소 (선택)  예: 서초구 반포동" }]} />}
-                {apts.length === 0 ? (
-                  <div style={{ textAlign:"center", paddingTop:80 }}>
-                    <div style={{ fontSize:38, marginBottom:12 }}>🏙️</div>
-                    <div style={{ fontSize:11, letterSpacing:"0.2em", color:MUTED, marginBottom:8 }}>NO APARTMENTS</div>
-                    <div style={{ fontSize:13, color:MUTED }}>아파트를 추가하고 동·호수별 가격을 추적하세요</div>
+            {showAddBld&&<AddForm title="새 동 추가" onCancel={()=>setShowAddBld(false)} onAdd={addBld} fields={[{key:"name",placeholder:"예: 104동",required:true,large:true}]}/>}
+            {selApt.buildings.length===0?<Empty icon="🏢" msg="등록된 동이 없습니다" sub="위의 '+ 동' 버튼을 눌러주세요"/>:
+              selApt.buildings.map(bld=>{
+                const range=priceRange(bld.units);
+                return(
+                  <div key={bld.id} className="cv" onClick={()=>goBld(bld.id)}
+                    style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"14px 18px",marginBottom:8}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div>
+                        <div style={{fontSize:15,fontWeight:600,marginBottom:5,fontFamily:"'Noto Sans KR',sans-serif"}}>{bld.name}</div>
+                        <span className="tag">{bld.units.length}개 호수</span>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        {range?<div className="mono" style={{fontSize:14,fontWeight:700,color:ACCENT}}>{range}</div>:<div style={{fontSize:12,color:MUTED}}>미입력</div>}
+                      </div>
+                    </div>
                   </div>
-                ) : apts.map(apt => {
-                  const allUnits = apt.buildings.flatMap(b => b.units);
-                  const range = priceRange(allUnits);
-                  return (
-                    <div key={apt.id} className="cv" onClick={() => goApt(apt.id)}
-                      style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"16px 18px", marginBottom:10 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start" }}>
-                        <div>
-                          <div style={{ fontSize:16, fontWeight:700, marginBottom:6, fontFamily:"'Noto Sans KR',sans-serif" }}>{apt.name}</div>
-                          <div style={{ display:"flex", gap:6 }}>
-                            {apt.address && <span className="tag">{apt.address}</span>}
-                            <span className="tag">{apt.buildings.length}개 동</span>
-                            <span className="tag">{allUnits.length}개 호수</span>
-                          </div>
+                );
+              })
+            }
+          </div>
+        )}
+
+        {/* UNIT LIST */}
+        {view==="unit"&&selBld&&(
+          <div className="page">
+            <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"12px 16px",marginBottom:12}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{flex:1,minWidth:0,marginRight:10}}>
+                  {bldEdit.editing?<InlineInput val={bldEdit.val} setVal={bldEdit.setVal} onSave={bldEdit.save} onCancel={bldEdit.cancel}/>:<EditBtn onClick={()=>bldEdit.start(selBld.name)} label="이름 수정"/>}
+                </div>
+                <DelBtn onClick={()=>delBld(selBld.id)} label="동 삭제"/>
+              </div>
+            </div>
+            {showAddUnit&&<AddForm title="새 호수 추가" onCancel={()=>setShowAddUnit(false)} onAdd={addUnit} fields={[{key:"name",placeholder:"예: 1201호 (12층)",required:true,large:true},{key:"area",placeholder:"면적 ㎡  예: 84.9"},{key:"url",placeholder:"네이버 부동산 URL (선택)"},{key:"initPrice",placeholder:"초기 매매가  예: 25.5",preview:true}]}/>}
+            {selBld.units.length===0?<Empty icon="🚪" msg="등록된 호수가 없습니다" sub="위의 '+ 호수' 버튼을 눌러주세요"/>:(
+              <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,overflow:"hidden"}}>
+                {selBld.units.map((u,i)=>{
+                  const lp=latestPrice(u),ch=priceChange(u.prices);
+                  return(
+                    <div key={u.id} className="hv cv" onClick={()=>goUnit(u.id)}
+                      style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"13px 18px",borderBottom:i<selBld.units.length-1?`1px solid ${BORDER}`:"none"}}>
+                      <div>
+                        <div style={{fontSize:15,fontWeight:600,marginBottom:4}}>{u.name}</div>
+                        <div style={{display:"flex",gap:5}}>
+                          {u.area&&<span className="tag">{u.area}㎡</span>}
+                          <span className="tag">{u.prices.length}건</span>
                         </div>
-                        <div style={{ textAlign:"right" }}>
-                          {range ? <div className="mono" style={{ fontSize:14, fontWeight:700, color:ACCENT }}>{range}</div> : <div style={{ fontSize:12, color:MUTED }}>미입력</div>}
-                        </div>
+                      </div>
+                      <div style={{textAlign:"right"}}>
+                        {lp?<div className="mono" style={{fontSize:15,fontWeight:700,color:ACCENT}}>{fmt(lp)}</div>:<div style={{fontSize:12,color:MUTED}}>미입력</div>}
+                        {ch!==null&&<div className="mono" style={{fontSize:11,marginTop:2,color:ch>0?ACCENT2:ch<0?"#5DADE2":MUTED}}>{ch>0?"▲":ch<0?"▼":"─"} {ch!==0?fmt(Math.abs(ch)):"변동없음"}</div>}
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
+          </div>
+        )}
 
-            {/* BUILDING LIST */}
-            {view==="building" && selApt && (
-              <div className="page">
-                <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"12px 16px", marginBottom:12 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <div style={{ flex:1, minWidth:0, marginRight:10 }}>
-                      {aptEdit.editing ? <InlineInput val={aptEdit.val} setVal={aptEdit.setVal} onSave={aptEdit.save} onCancel={aptEdit.cancel} /> : (
-                        <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                          {selApt.address && <span className="tag">{selApt.address}</span>}
-                          <EditBtn onClick={() => aptEdit.start(selApt.name)} label="이름 수정" />
+        {/* UNIT DETAIL */}
+        {view==="unit_detail"&&selUnit&&(
+          <div className="page">
+            <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"16px 18px",marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                <div style={{flex:1,minWidth:0,marginRight:10}}>
+                  {unitEdit.editing?<InlineInput val={unitEdit.val} setVal={unitEdit.setVal} onSave={unitEdit.save} onCancel={unitEdit.cancel}/>:(
+                    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                      {editingArea?(
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                          <input autoFocus value={editAreaVal} onChange={e=>setEditAreaVal(e.target.value)}
+                            onKeyDown={e=>{if(e.key==="Enter")saveArea();if(e.key==="Escape")setEditingArea(false);}}
+                            placeholder="면적 ㎡"
+                            style={{width:80,...IS({padding:"5px 8px",fontSize:13}),border:`2px solid ${ACCENT}`}}/>
+                          <button onClick={saveArea} style={{background:ACCENT,color:"#050F05",border:"none",borderRadius:5,padding:"5px 10px",fontWeight:700,fontSize:12,cursor:"pointer"}}>저장</button>
+                          <button onClick={()=>setEditingArea(false)} style={{background:"none",border:`1px solid ${BORDER}`,borderRadius:5,padding:"5px 8px",color:MUTED,fontSize:12,cursor:"pointer"}}>취소</button>
                         </div>
+                      ):(
+                        <>
+                          {selUnit.area&&<span className="tag">{selUnit.area}㎡</span>}
+                          <EditBtn onClick={()=>{setEditAreaVal(selUnit.area||"");setEditingArea(true);unitEdit.cancel();}} label="면적 수정"/>
+                        </>
                       )}
+                      {!editingArea&&<EditBtn onClick={()=>{unitEdit.start(selUnit.name);setEditingArea(false);}} label="이름 수정"/>}
                     </div>
-                    <DelBtn onClick={() => delApt(selApt.id)} label="삭제" />
-                  </div>
+                  )}
                 </div>
-                {showAddBld && <AddForm title="새 동 추가" onCancel={() => setShowAddBld(false)} onAdd={addBld} fields={[{ key:"name", placeholder:"예: 104동", required:true, large:true }]} />}
-                {selApt.buildings.length === 0 ? <Empty icon="🏢" msg="등록된 동이 없습니다" sub="위의 '+ 동' 버튼을 눌러주세요" /> :
-                  selApt.buildings.map(bld => {
-                    const range = priceRange(bld.units);
-                    return (
-                      <div key={bld.id} className="cv" onClick={() => goBld(bld.id)}
-                        style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"14px 18px", marginBottom:8 }}>
-                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                          <div>
-                            <div style={{ fontSize:15, fontWeight:600, marginBottom:5, fontFamily:"'Noto Sans KR',sans-serif" }}>{bld.name}</div>
-                            <span className="tag">{bld.units.length}개 호수</span>
-                          </div>
-                          <div style={{ textAlign:"right" }}>
-                            {range ? <div className="mono" style={{ fontSize:14, fontWeight:700, color:ACCENT }}>{range}</div> : <div style={{ fontSize:12, color:MUTED }}>미입력</div>}
-                          </div>
+                <DelBtn onClick={()=>delUnit(selUnit.id)} label="삭제"/>
+              </div>
+
+              {selUnit.prices.length>0?(()=>{
+                const lp=selUnit.prices[selUnit.prices.length-1],ch=priceChange(selUnit.prices);
+                return(
+                  <div style={{display:"flex",alignItems:"baseline",gap:10,marginBottom:14}}>
+                    <span className="mono" style={{fontSize:28,fontWeight:700,color:ACCENT}}>{fmt(lp.price)}</span>
+                    {ch!==null&&<span className="mono" style={{fontSize:13,color:ch>0?ACCENT2:ch<0?"#5DADE2":MUTED}}>{ch>0?"▲":ch<0?"▼":"─"} {ch!==0?fmt(Math.abs(ch)):"변동없음"}</span>}
+                    <span style={{fontSize:11,color:MUTED,marginLeft:"auto"}}>최근 {lp.date}</span>
+                  </div>
+                );
+              })():<div style={{fontSize:13,color:MUTED,marginBottom:14}}>아직 가격이 기록되지 않았습니다</div>}
+
+              {selUnit.url?(
+                <a href={selUnit.url} target="_blank" rel="noreferrer" style={{textDecoration:"none",display:"block"}}>
+                  <div style={{background:"#0D2B1A",border:`1px solid ${ACCENT}55`,borderRadius:7,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                    <div>
+                      <div style={{fontSize:12,color:ACCENT,fontWeight:700,marginBottom:2}}>① 네이버 부동산에서 가격 확인</div>
+                      <div style={{fontSize:11,color:MUTED}}>확인 후 돌아와서 아래에 입력하세요</div>
+                    </div>
+                    <span style={{fontSize:20,color:ACCENT}}>↗</span>
+                  </div>
+                </a>
+              ):(
+                <div style={{background:"#1A1A1A",border:`1px dashed ${BORDER}`,borderRadius:7,padding:"11px 16px",fontSize:12,color:MUTED}}>등록된 네이버 URL이 없습니다</div>
+              )}
+            </div>
+
+            {/* 가격 입력 */}
+            <div style={{background:"#0D2010",border:`1px solid ${ACCENT}44`,borderRadius:8,padding:"16px 18px",marginBottom:10}}>
+              <div className="mono" style={{fontSize:10,color:ACCENT,letterSpacing:"0.15em",marginBottom:12}}>② 오늘 확인한 가격 입력</div>
+              <div style={{display:"flex",gap:8,marginBottom:8}}>
+                <div style={{flex:1}}>
+                  <input ref={priceRef} value={priceVal} onChange={e=>setPriceVal(e.target.value)}
+                    onKeyDown={e=>e.key==="Enter"&&addPrice()}
+                    placeholder="예: 25.5  (억 단위)"
+                    style={{width:"100%",...IS({padding:"12px 14px",fontSize:15}),border:`2px solid ${priceVal&&parseWon(priceVal)?ACCENT:"#1A2E1A"}`,transition:"border .15s"}}/>
+                  {priceVal&&parseWon(priceVal)>0&&(()=>{
+                    const v=parseWon(priceVal);
+                    const diff=selUnit.prices.length>0?v-selUnit.prices[selUnit.prices.length-1].price:null;
+                    return(
+                      <div className="mono" style={{fontSize:12,color:ACCENT,marginTop:5,paddingLeft:2}}>
+                        = {fmt(v)}
+                        {diff!==null&&diff!==0&&<span style={{color:diff>0?ACCENT2:"#5DADE2"}}> ({diff>0?"▲+":"▼"}{fmt(Math.abs(diff))})</span>}
+                        {diff===0&&<span style={{color:MUTED}}> (변동없음)</span>}
+                      </div>
+                    );
+                  })()}
+                </div>
+                <input type="date" value={priceDate} onChange={e=>setPriceDate(e.target.value)}
+                  style={{...IS({padding:"12px 10px",fontSize:12}),border:`2px solid #1A2E1A`}}/>
+              </div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={priceNote} onChange={e=>setPriceNote(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&addPrice()}
+                  placeholder="메모 (선택)"
+                  style={{flex:1,...IS({padding:"10px 12px",fontSize:13}),border:`2px solid #1A2E1A`}}/>
+                <button onClick={addPrice} disabled={!parseWon(priceVal)}
+                  style={{background:parseWon(priceVal)?ACCENT:"#1A231A",color:parseWon(priceVal)?"#050F05":MUTED,padding:"10px 22px",borderRadius:6,fontSize:14,fontWeight:800,border:"none",cursor:"pointer",transition:"all .2s"}}>
+                  기록
+                </button>
+              </div>
+            </div>
+
+            {/* 차트 */}
+            {selUnit.prices.length>=2&&(
+              <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"16px 18px 10px",marginBottom:10}}>
+                <div className="mono" style={{fontSize:10,color:MUTED,letterSpacing:"0.15em",marginBottom:8}}>가격 추이</div>
+                <MiniChart prices={selUnit.prices}/>
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+                  <span className="mono" style={{fontSize:9,color:MUTED}}>{selUnit.prices[0].date}</span>
+                  <span className="mono" style={{fontSize:9,color:MUTED}}>{selUnit.prices[selUnit.prices.length-1].date}</span>
+                </div>
+              </div>
+            )}
+
+            {/* 가격 이력 */}
+            <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,overflow:"hidden"}}>
+              <div style={{padding:"12px 18px",borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between"}}>
+                <span className="mono" style={{fontSize:10,color:MUTED,letterSpacing:"0.15em"}}>가격 이력</span>
+                <span className="mono" style={{fontSize:10,color:MUTED}}>{selUnit.prices.length}건</span>
+              </div>
+              {selUnit.prices.length===0
+                ?<div style={{padding:"28px 18px",textAlign:"center",color:MUTED,fontSize:13}}>아직 기록된 가격이 없습니다</div>
+                :[...selUnit.prices].reverse().map((pr,i)=>{
+                    const origIdx=selUnit.prices.length-1-i;
+                    const prev=selUnit.prices[origIdx-1];
+                    const diff=prev?pr.price-prev.price:null;
+                    return(
+                      <div key={i} className="hv" style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"11px 18px",borderBottom:`1px solid ${BORDER}`}}>
+                        <div>
+                          <span className="mono" style={{fontSize:15,fontWeight:600}}>{fmt(pr.price)}</span>
+                          {pr.note&&<span style={{fontSize:11,color:MUTED,marginLeft:8}}>· {pr.note}</span>}
+                          <div className="mono" style={{fontSize:11,color:MUTED,marginTop:2}}>{pr.date}</div>
+                        </div>
+                        <div style={{display:"flex",alignItems:"center",gap:12}}>
+                          {diff!==null&&<span className="mono" style={{fontSize:12,color:diff>0?ACCENT2:diff<0?"#5DADE2":MUTED}}>{diff>0?"▲":diff<0?"▼":"─"} {diff!==0?fmt(Math.abs(diff)):"-"}</span>}
+                          <button onClick={()=>delPrice(origIdx)} style={{background:"none",color:MUTED,fontSize:16,padding:"2px 6px",borderRadius:3,border:"none",cursor:"pointer"}}>×</button>
                         </div>
                       </div>
                     );
                   })
-                }
-              </div>
-            )}
-
-            {/* UNIT LIST */}
-            {view==="unit" && selBld && (
-              <div className="page">
-                <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"12px 16px", marginBottom:12 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-                    <div style={{ flex:1, minWidth:0, marginRight:10 }}>
-                      {bldEdit.editing ? <InlineInput val={bldEdit.val} setVal={bldEdit.setVal} onSave={bldEdit.save} onCancel={bldEdit.cancel} /> : <EditBtn onClick={() => bldEdit.start(selBld.name)} label="이름 수정" />}
-                    </div>
-                    <DelBtn onClick={() => delBld(selBld.id)} label="동 삭제" />
-                  </div>
-                </div>
-                {showAddUnit && <AddForm title="새 호수 추가" onCancel={() => setShowAddUnit(false)} onAdd={addUnit} fields={[{ key:"name", placeholder:"예: 1201호 (12층)", required:true, large:true },{ key:"area", placeholder:"면적 ㎡  예: 84.9" },{ key:"url", placeholder:"네이버 부동산 URL (선택)" },{ key:"initPrice", placeholder:"초기 매매가 (선택)  예: 25.5억", preview:true }]} />}
-                {selBld.units.length === 0 ? <Empty icon="🚪" msg="등록된 호수가 없습니다" sub="위의 '+ 호수' 버튼을 눌러주세요" /> : (
-                  <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, overflow:"hidden" }}>
-                    {selBld.units.map((u, i) => {
-                      const lp = latestPrice(u), ch = priceChange(u.prices);
-                      return (
-                        <div key={u.id} className="hv cv" onClick={() => goUnit(u.id)}
-                          style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"13px 18px", borderBottom: i < selBld.units.length-1 ? `1px solid ${BORDER}` : "none" }}>
-                          <div>
-                            <div style={{ fontSize:15, fontWeight:600, marginBottom:4 }}>{u.name}</div>
-                            <div style={{ display:"flex", gap:5 }}>
-                              {u.area && <span className="tag">{u.area}㎡</span>}
-                              <span className="tag">{u.prices.length}건</span>
-                            </div>
-                          </div>
-                          <div style={{ textAlign:"right" }}>
-                            {lp ? <div className="mono" style={{ fontSize:15, fontWeight:700, color:ACCENT }}>{fmt(lp)}</div> : <div style={{ fontSize:12, color:MUTED }}>미입력</div>}
-                            {ch !== null && <div className="mono" style={{ fontSize:11, marginTop:2, color:ch>0?ACCENT2:ch<0?"#5DADE2":MUTED }}>{ch>0?"▲":ch<0?"▼":"─"} {ch!==0?fmt(Math.abs(ch)):"변동없음"}</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* UNIT DETAIL */}
-            {view==="unit_detail" && selUnit && (
-              <div className="page">
-                <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"16px 18px", marginBottom:10 }}>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:10 }}>
-                    <div style={{ flex:1, minWidth:0, marginRight:10 }}>
-                      {unitEdit.editing ? <InlineInput val={unitEdit.val} setVal={unitEdit.setVal} onSave={unitEdit.save} onCancel={unitEdit.cancel} /> : (
-                        <div style={{ display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
-                          {editingArea ? (
-                            <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                              <input autoFocus value={editAreaVal} onChange={e => setEditAreaVal(e.target.value)}
-                                onKeyDown={e => { if(e.key==="Enter") saveArea(); if(e.key==="Escape") setEditingArea(false); }}
-                                placeholder="면적 ㎡"
-                                style={{ width:80, ...IS({ padding:"5px 8px", fontSize:13 }), border:`2px solid ${ACCENT}` }} />
-                              <button onClick={saveArea} style={{ background:ACCENT, color:"#050F05", border:"none", borderRadius:5, padding:"5px 10px", fontWeight:700, fontSize:12, cursor:"pointer" }}>저장</button>
-                              <button onClick={() => setEditingArea(false)} style={{ background:"none", border:`1px solid ${BORDER}`, borderRadius:5, padding:"5px 8px", color:MUTED, fontSize:12, cursor:"pointer" }}>취소</button>
-                            </div>
-                          ) : (
-                            <>
-                              {selUnit.area && <span className="tag">{selUnit.area}㎡</span>}
-                              <EditBtn onClick={() => { setEditAreaVal(selUnit.area||""); setEditingArea(true); unitEdit.cancel(); }} label="면적 수정" />
-                            </>
-                          )}
-                          {!editingArea && <EditBtn onClick={() => { unitEdit.start(selUnit.name); setEditingArea(false); }} label="이름 수정" />}
-                        </div>
-                      )}
-                    </div>
-                    <DelBtn onClick={() => delUnit(selUnit.id)} label="삭제" />
-                  </div>
-
-                  {selUnit.prices.length > 0 ? (() => {
-                    const lp = selUnit.prices[selUnit.prices.length-1], ch = priceChange(selUnit.prices);
-                    return (
-                      <div style={{ display:"flex", alignItems:"baseline", gap:10, marginBottom:14 }}>
-                        <span className="mono" style={{ fontSize:28, fontWeight:700, color:ACCENT }}>{fmt(lp.price)}</span>
-                        {ch !== null && <span className="mono" style={{ fontSize:13, color:ch>0?ACCENT2:ch<0?"#5DADE2":MUTED }}>{ch>0?"▲":ch<0?"▼":"─"} {ch!==0?fmt(Math.abs(ch)):"변동없음"}</span>}
-                        <span style={{ fontSize:11, color:MUTED, marginLeft:"auto" }}>최근 {lp.date}</span>
-                      </div>
-                    );
-                  })() : <div style={{ fontSize:13, color:MUTED, marginBottom:14 }}>아직 가격이 기록되지 않았습니다</div>}
-
-                  {selUnit.url ? (
-                    <a href={selUnit.url} target="_blank" rel="noreferrer" style={{ textDecoration:"none", display:"block" }}>
-                      <div style={{ background:"#0D2B1A", border:`1px solid ${ACCENT}55`, borderRadius:7, padding:"12px 16px", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
-                        <div>
-                          <div style={{ fontSize:12, color:ACCENT, fontWeight:700, marginBottom:2 }}>① 네이버 부동산에서 가격 확인</div>
-                          <div style={{ fontSize:11, color:MUTED }}>확인 후 돌아와서 아래에 입력하세요</div>
-                        </div>
-                        <span style={{ fontSize:20, color:ACCENT }}>↗</span>
-                      </div>
-                    </a>
-                  ) : (
-                    <div style={{ background:"#1A1A1A", border:`1px dashed ${BORDER}`, borderRadius:7, padding:"11px 16px", fontSize:12, color:MUTED }}>등록된 네이버 URL이 없습니다</div>
-                  )}
-                </div>
-
-                {/* 가격 입력 */}
-                <div style={{ background:"#0D2010", border:`1px solid ${ACCENT}44`, borderRadius:8, padding:"16px 18px", marginBottom:10 }}>
-                  <div className="mono" style={{ fontSize:10, color:ACCENT, letterSpacing:"0.15em", marginBottom:12 }}>② 오늘 확인한 가격 입력</div>
-                  <div style={{ display:"flex", gap:8, marginBottom:8 }}>
-                    <div style={{ flex:1 }}>
-                      <input ref={priceRef} value={priceVal} onChange={e => setPriceVal(e.target.value)}
-                        onKeyDown={e => e.key==="Enter" && addPrice()}
-                        placeholder="예: 25.5  →  25.5억"
-                        style={{ width:"100%", ...IS({ padding:"12px 14px", fontSize:15 }), border:`2px solid ${priceVal && parseWon(priceVal) ? ACCENT : "#1A2E1A"}`, transition:"border .15s" }} />
-                      {priceVal && parseWon(priceVal) > 0 && (() => {
-                        const v = parseWon(priceVal);
-                        const diff = selUnit.prices.length > 0 ? v - selUnit.prices[selUnit.prices.length-1].price : null;
-                        return (
-                          <div className="mono" style={{ fontSize:12, color:ACCENT, marginTop:5, paddingLeft:2 }}>
-                            = {fmt(v)}
-                            {diff !== null && diff !== 0 && <span style={{ color:diff>0?ACCENT2:"#5DADE2" }}> ({diff>0?"▲+":"▼"}{fmt(Math.abs(diff))})</span>}
-                            {diff === 0 && <span style={{ color:MUTED }}> (변동없음)</span>}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    <input type="date" value={priceDate} onChange={e => setPriceDate(e.target.value)}
-                      style={{ ...IS({ padding:"12px 10px", fontSize:12 }), border:`2px solid #1A2E1A` }} />
-                  </div>
-                  <div style={{ display:"flex", gap:8 }}>
-                    <input value={priceNote} onChange={e => setPriceNote(e.target.value)}
-                      onKeyDown={e => e.key==="Enter" && addPrice()}
-                      placeholder="메모 (선택, Enter로 기록)"
-                      style={{ flex:1, ...IS({ padding:"10px 12px", fontSize:13 }), border:`2px solid #1A2E1A` }} />
-                    <button onClick={addPrice} disabled={!parseWon(priceVal)}
-                      style={{ background:parseWon(priceVal)?ACCENT:"#1A231A", color:parseWon(priceVal)?"#050F05":MUTED, padding:"10px 22px", borderRadius:6, fontSize:14, fontWeight:800, border:"none", cursor:"pointer", transition:"all .2s" }}>
-                      기록
-                    </button>
-                  </div>
-                </div>
-
-                {/* 차트 */}
-                {selUnit.prices.length >= 2 && (
-                  <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, padding:"16px 18px 10px", marginBottom:10 }}>
-                    <div className="mono" style={{ fontSize:10, color:MUTED, letterSpacing:"0.15em", marginBottom:12 }}>가격 추이</div>
-                    <ResponsiveContainer width="100%" height={150}>
-                      <LineChart data={selUnit.prices} margin={{ left:-10, right:10 }}>
-                        <XAxis dataKey="date" tick={{ fontSize:9, fill:MUTED }} tickLine={false} axisLine={false} />
-                        <YAxis tickFormatter={v => fmt(v)} tick={{ fontSize:9, fill:MUTED }} tickLine={false} axisLine={false} width={72} />
-                        <Tooltip content={<CustomTooltip />} />
-                        <ReferenceLine y={selUnit.prices[0].price} stroke={BORDER} strokeDasharray="4 4" />
-                        <Line type="monotone" dataKey="price" stroke={ACCENT} strokeWidth={2} dot={{ r:3, fill:ACCENT, strokeWidth:0 }} activeDot={{ r:5, fill:ACCENT, strokeWidth:0 }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-
-                {/* 가격 이력 */}
-                <div style={{ background:CARD, border:`1px solid ${BORDER}`, borderRadius:8, overflow:"hidden" }}>
-                  <div style={{ padding:"12px 18px", borderBottom:`1px solid ${BORDER}`, display:"flex", justifyContent:"space-between" }}>
-                    <span className="mono" style={{ fontSize:10, color:MUTED, letterSpacing:"0.15em" }}>가격 이력</span>
-                    <span className="mono" style={{ fontSize:10, color:MUTED }}>{selUnit.prices.length}건</span>
-                  </div>
-                  {selUnit.prices.length === 0
-                    ? <div style={{ padding:"28px 18px", textAlign:"center", color:MUTED, fontSize:13 }}>아직 기록된 가격이 없습니다</div>
-                    : [...selUnit.prices].reverse().map((pr, i) => {
-                        const origIdx = selUnit.prices.length - 1 - i;
-                        const prev = selUnit.prices[origIdx - 1];
-                        const diff = prev ? pr.price - prev.price : null;
-                        return (
-                          <div key={i} className="hv" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"11px 18px", borderBottom:`1px solid ${BORDER}` }}>
-                            <div>
-                              <span className="mono" style={{ fontSize:15, fontWeight:600 }}>{fmt(pr.price)}</span>
-                              {pr.note && <span style={{ fontSize:11, color:MUTED, marginLeft:8 }}>· {pr.note}</span>}
-                              <div className="mono" style={{ fontSize:11, color:MUTED, marginTop:2 }}>{pr.date}</div>
-                            </div>
-                            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-                              {diff !== null && <span className="mono" style={{ fontSize:12, color:diff>0?ACCENT2:diff<0?"#5DADE2":MUTED }}>{diff>0?"▲":diff<0?"▼":"─"} {diff!==0?fmt(Math.abs(diff)):"-"}</span>}
-                              <button onClick={() => delPrice(origIdx)} style={{ background:"none", color:MUTED, fontSize:16, padding:"2px 6px", borderRadius:3, border:"none", cursor:"pointer" }}>×</button>
-                            </div>
-                          </div>
-                        );
-                      })
-                  }
-                </div>
-              </div>
-            )}
+              }
+            </div>
           </div>
+        )}
+      </div>
 
-          {/* 삭제 확인 모달 */}
-          {confirmDel && (
-            <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,.7)", zIndex:300, display:"flex", alignItems:"center", justifyContent:"center", padding:20 }}>
-              <div style={{ background:"#141814", border:`1px solid ${BORDER}`, borderRadius:12, padding:"24px 24px 20px", maxWidth:320, width:"100%" }}>
-                <div style={{ fontSize:13, color:TEXT, lineHeight:1.7, marginBottom:20, whiteSpace:"pre-line" }}>{confirmDel.msg}</div>
-                <div style={{ display:"flex", gap:8 }}>
-                  <button onClick={() => { confirmDel.onConfirm(); setConfirmDel(null); }}
-                    style={{ flex:1, background:ACCENT2, color:"#fff", border:"none", borderRadius:7, padding:"11px", fontSize:13, fontWeight:700, cursor:"pointer" }}>삭제</button>
-                  <button onClick={() => setConfirmDel(null)}
-                    style={{ flex:1, background:"none", color:MUTED, border:`1px solid ${BORDER}`, borderRadius:7, padding:"11px", fontSize:13, cursor:"pointer" }}>취소</button>
-                </div>
-              </div>
+      {/* 삭제 확인 모달 */}
+      {confirmDel&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div style={{background:"#141814",border:`1px solid ${BORDER}`,borderRadius:12,padding:"24px 24px 20px",maxWidth:320,width:"100%"}}>
+            <div style={{fontSize:13,color:TEXT,lineHeight:1.7,marginBottom:20,whiteSpace:"pre-line"}}>{confirmDel.msg}</div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={()=>{confirmDel.onConfirm();setConfirmDel(null);}}
+                style={{flex:1,background:ACCENT2,color:"#fff",border:"none",borderRadius:7,padding:"11px",fontSize:13,fontWeight:700,cursor:"pointer"}}>삭제</button>
+              <button onClick={()=>setConfirmDel(null)}
+                style={{flex:1,background:"none",color:MUTED,border:`1px solid ${BORDER}`,borderRadius:7,padding:"11px",fontSize:13,cursor:"pointer"}}>취소</button>
             </div>
-          )}
-
-          {toast && (
-            <div className="ta" style={{ position:"fixed", bottom:24, left:"50%", transform:"translateX(-50%)", background:"#1A231A", border:`1px solid ${ACCENT}33`, color:ACCENT, padding:"10px 20px", borderRadius:6, fontSize:13, boxShadow:"0 4px 24px rgba(0,0,0,.5)", whiteSpace:"nowrap", fontFamily:"'IBM Plex Mono',monospace" }}>
-              {toast}
-            </div>
-          )}
+          </div>
         </div>
-      );
-    }
+      )}
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-  </script>
+      {toast&&(
+        <div className="ta" style={{position:"fixed",bottom:24,left:"50%",transform:"translateX(-50%)",background:"#1A231A",border:`1px solid ${ACCENT}33`,color:ACCENT,padding:"10px 20px",borderRadius:6,fontSize:13,boxShadow:"0 4px 24px rgba(0,0,0,.5)",whiteSpace:"nowrap",fontFamily:"'IBM Plex Mono',monospace"}}>
+          {toast}
+        </div>
+      )}
+    </div>
+  );
+}
 
-  <!-- Service Worker 등록 -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('sw.js');
-    }
-  </script>
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+<script>if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js');</script>
 </body>
 </html>
