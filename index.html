@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
   <title>부동산 가격 추적기</title>
+  <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="부동산추적" />
@@ -30,8 +31,50 @@
 </head>
 <body>
 <div id="root"></div>
+
+<!-- React -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+
+<!-- Firebase compat (UMD 방식 - Babel과 충돌 없음) -->
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAqGPfaw26es5pdrdhq3e2xJ1YehgQgcAc",
+    authDomain: "realestate-f03ba.firebaseapp.com",
+    projectId: "realestate-f03ba",
+    storageBucket: "realestate-f03ba.firebasestorage.app",
+    messagingSenderId: "457698469240",
+    appId: "1:457698469240:web:f72eb7017e8c0ea43b548d"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.firestore();
+  const DATA_DOC = db.collection("realty").doc("main");
+
+  window.fbLoad = async () => {
+    try {
+      const snap = await DATA_DOC.get();
+      if (snap.exists) return snap.data().apts || [];
+    } catch(e) { console.error("fbLoad error", e); }
+    return null;
+  };
+  window.fbSave = async (apts) => {
+    try {
+      await DATA_DOC.set({ apts, updatedAt: new Date().toISOString() });
+    } catch(e) { console.error("fbSave error", e); }
+  };
+  window.fbWatch = (callback) => {
+    return DATA_DOC.onSnapshot((snap) => {
+      if (snap.exists) callback(snap.data().apts || []);
+    });
+  };
+  window.firebaseReady = true;
+  window.dispatchEvent(new Event("firebaseReady"));
+  console.log("Firebase 초기화 완료!");
+</script>
+
+<!-- Babel -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
 <script type="text/babel">
 const { useState, useEffect, useRef } = React;
@@ -58,10 +101,8 @@ const parseNaverURL=(url)=>{
 const latestPrice=(unit)=>unit.prices[unit.prices.length-1]?.price;
 const priceChange=(prices)=>prices.length<2?null:prices[prices.length-1].price-prices[prices.length-2].price;
 const allUnitPrices=(units)=>units.map(u=>latestPrice(u)).filter(Boolean);
-
 const IS=(extra={})=>({background:"#050F05",border:`1px solid ${BORDER}`,borderRadius:6,color:TEXT,...extra});
 
-// SVG 미니 차트
 function MiniChart({prices}){
   if(prices.length<2)return null;
   const W=300,H=100,pad=8;
@@ -76,9 +117,7 @@ function MiniChart({prices}){
   return(
     <svg viewBox={`0 0 ${W} ${H}`} style={{width:"100%",height:120,display:"block"}}>
       <polyline points={pts} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round"/>
-      {prices.map((p,i)=>(
-        <circle key={i} cx={x(i)} cy={y(p.price)} r="3" fill={color}/>
-      ))}
+      {prices.map((p,i)=><circle key={i} cx={x(i)} cy={y(p.price)} r="3" fill={color}/>)}
       <line x1={pad} y1={y(first)} x2={W-pad} y2={y(first)} stroke={BORDER} strokeDasharray="4 3"/>
     </svg>
   );
@@ -140,6 +179,8 @@ function Empty({icon,msg,sub}){return<div style={{textAlign:"center",paddingTop:
 function App(){
   const[apts,setApts]=useState([]);
   const[loaded,setLoaded]=useState(false);
+  const[syncing,setSyncing]=useState(false);
+  const[syncOk,setSyncOk]=useState(false);
   const[view,setView]=useState("apt");
   const[selAptId,setSelAptId]=useState(null);
   const[selBldId,setSelBldId]=useState(null);
@@ -151,29 +192,59 @@ function App(){
   const[confirmDel,setConfirmDel]=useState(null);
   const[editingArea,setEditingArea]=useState(false);
   const[editAreaVal,setEditAreaVal]=useState("");
+  const[editingUrl,setEditingUrl]=useState(false);
+  const[editUrlVal,setEditUrlVal]=useState("");
   const[priceVal,setPriceVal]=useState("");
   const[priceDate,setPriceDate]=useState(today());
   const[priceNote,setPriceNote]=useState("");
   const priceRef=useRef(null);
+  const saveTimer=useRef(null);
+  const ignoreNext=useRef(false);
 
   useEffect(()=>{
-    try{
-      const s4=localStorage.getItem(STORAGE_KEY);
-      if(s4){const d=JSON.parse(s4);if(d.length>0){setApts(d);setLoaded(true);return;}}
-      const s3=localStorage.getItem("naver_realty_v3");
-      if(s3){
-        const groups=JSON.parse(s3);
-        setApts([{id:Date.now().toString(),name:"내 아파트",address:"",createdAt:"",
-          buildings:groups.map(g=>({id:g.id,name:g.name,createdAt:g.createdAt||"",
-            units:(g.units||[]).map(u=>({id:u.id,name:u.name,area:u.area||"",url:u.url||"",articleId:u.articleId||null,prices:u.prices||[],createdAt:u.createdAt||""}))}))}]);
-        setLoaded(true);return;
-      }
-    }catch{}
-    setLoaded(true);
+    const init=async()=>{
+      try{
+        const fbData=await window.fbLoad();
+        if(fbData&&fbData.length>0){
+          setApts(fbData);
+          localStorage.setItem(STORAGE_KEY,JSON.stringify(fbData));
+          setLoaded(true);
+          return;
+        }
+      }catch(e){console.error("init error",e);}
+      // fallback localStorage
+      try{
+        const s=localStorage.getItem(STORAGE_KEY);
+        if(s){const d=JSON.parse(s);if(d.length>0)setApts(d);}
+      }catch{}
+      setLoaded(true);
+    };
+    init();
   },[]);
 
+  // 실시간 동기화
   useEffect(()=>{
-    if(loaded&&apts.length>0)try{localStorage.setItem(STORAGE_KEY,JSON.stringify(apts));}catch{}
+    if(!loaded||!window.fbWatch)return;
+    const unsub=window.fbWatch((data)=>{
+      if(ignoreNext.current){ignoreNext.current=false;return;}
+      setApts(data);
+      localStorage.setItem(STORAGE_KEY,JSON.stringify(data));
+    });
+    return()=>unsub();
+  },[loaded]);
+
+  // 저장 debounce
+  useEffect(()=>{
+    if(!loaded||apts.length===0)return;
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(apts));
+    if(saveTimer.current)clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(async()=>{
+      setSyncing(true);
+      ignoreNext.current=true;
+      await window.fbSave(apts);
+      setSyncing(false);setSyncOk(true);
+      setTimeout(()=>setSyncOk(false),2000);
+    },1500);
   },[apts,loaded]);
 
   const showToast=(msg)=>{setToast(msg);setTimeout(()=>setToast(""),2400);};
@@ -185,11 +256,9 @@ function App(){
   const addApt=({name,address})=>{updApts(p=>[{id:Date.now().toString(),name:name.trim(),address:address.trim(),buildings:[],createdAt:today()},...p]);setShowAddApt(false);showToast("✓ 아파트가 추가되었습니다");};
   const delApt=(id)=>setConfirmDel({msg:`"${apts.find(a=>a.id===id)?.name}" 아파트를 삭제할까요?\n하위 동·호수 데이터가 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.filter(a=>a.id!==id));setView("apt");showToast("삭제되었습니다");}});
   const renameApt=(name)=>{updApts(p=>p.map(a=>a.id===selAptId?{...a,name}:a));showToast("✓ 수정되었습니다");};
-
   const addBld=({name})=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:[...a.buildings,{id:Date.now().toString(),name:name.trim(),units:[],createdAt:today()}]}));setShowAddBld(false);showToast("✓ 동이 추가되었습니다");};
   const delBld=(id)=>setConfirmDel({msg:`"${selApt?.buildings.find(b=>b.id===id)?.name}"을 삭제할까요?\n하위 호수 데이터가 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.filter(b=>b.id!==id)}));setView("building");showToast("삭제되었습니다");}});
   const renameBld=(name)=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id===selBldId?{...b,name}:b)}));showToast("✓ 수정되었습니다");};
-
   const addUnit=({name,area,url,initPrice})=>{
     const parsed=parseNaverURL(url);const prices=[];const p0=parseWon(initPrice);
     if(p0)prices.push({date:today(),price:p0,note:"초기가"});
@@ -199,8 +268,12 @@ function App(){
   };
   const delUnit=(id)=>setConfirmDel({msg:`"${selBld?.units.find(u=>u.id===id)?.name}"을 삭제할까요?\n가격 기록이 모두 삭제됩니다.`,onConfirm:()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.filter(u=>u.id!==id)})}));setView("unit");showToast("삭제되었습니다");}});
   const renameUnit=(name)=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id===selUnitId?{...u,name}:u)})}));showToast("✓ 수정되었습니다");};
+  const saveUrl=()=>{
+    const parsed=parseNaverURL(editUrlVal.trim());
+    updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id===selUnitId?{...u,url:editUrlVal.trim(),articleId:parsed?.articleId||null}:u)})}));
+    setEditingUrl(false);showToast("✓ URL이 저장되었습니다");
+  };
   const saveArea=()=>{updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id===selUnitId?{...u,area:editAreaVal.trim()}:u)})}));setEditingArea(false);showToast("✓ 수정되었습니다");};
-
   const addPrice=()=>{
     const val=parseWon(priceVal);if(!val)return;
     updApts(p=>p.map(a=>a.id!==selAptId?a:{...a,buildings:a.buildings.map(b=>b.id!==selBldId?b:{...b,units:b.units.map(u=>u.id!==selUnitId?u:{...u,prices:[...u.prices,{date:priceDate,price:val,note:priceNote}].sort((a,b)=>a.date.localeCompare(b.date))})})}));
@@ -216,17 +289,22 @@ function App(){
   const aptEdit=useInlineEdit(selApt?.name,renameApt);
   const bldEdit=useInlineEdit(selBld?.name,renameBld);
   const unitEdit=useInlineEdit(selUnit?.name,renameUnit);
-
   const priceRange=(units)=>{
     const ps=allUnitPrices(units);if(!ps.length)return null;
     const mn=Math.min(...ps),mx=Math.max(...ps);
     return mn===mx?fmt(mn):`${fmt(mn)} ~ ${fmt(mx)}`;
   };
 
+  if(!loaded)return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",height:"100vh",gap:16}}>
+      <div style={{fontSize:32}}>🏙️</div>
+      <div style={{fontSize:12,color:MUTED,letterSpacing:"0.15em"}}>데이터 불러오는 중...</div>
+    </div>
+  );
+
   return(
     <div style={{fontFamily:"'IBM Plex Mono',monospace",background:BG,minHeight:"100vh",color:TEXT}}>
 
-      {/* NAV */}
       <nav style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"0 20px",height:52,borderBottom:`1px solid ${BORDER}`,position:"sticky",top:0,background:BG,zIndex:200}}>
         <div style={{display:"flex",alignItems:"center",gap:4,minWidth:0,flex:1}}>
           {view!=="apt"&&(
@@ -240,7 +318,10 @@ function App(){
             {view==="unit_detail"&&<><span style={{cursor:"pointer"}} onClick={()=>setView("building")}>{selApt?.name}</span><span style={{color:"#2A3A2A"}}>›</span><span style={{cursor:"pointer"}} onClick={()=>setView("unit")}>{selBld?.name}</span><span style={{color:"#2A3A2A"}}>›</span><span style={{color:TEXT,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{selUnit?.name}</span></>}
           </div>
         </div>
-        <div style={{flexShrink:0,marginLeft:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0,marginLeft:8}}>
+          <span className="mono" style={{fontSize:9,color:syncing?"#F0C040":syncOk?ACCENT:"transparent"}}>
+            {syncing?"저장 중…":"✓ 저장됨"}
+          </span>
           {view==="apt"&&<button onClick={()=>setShowAddApt(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 아파트</button>}
           {view==="building"&&<button onClick={()=>setShowAddBld(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 동</button>}
           {view==="unit"&&<button onClick={()=>setShowAddUnit(v=>!v)} style={{background:ACCENT,color:"#050F05",fontSize:12,fontWeight:700,padding:"6px 14px",borderRadius:4,border:"none",cursor:"pointer"}}>+ 호수</button>}
@@ -249,7 +330,6 @@ function App(){
 
       <div style={{maxWidth:640,margin:"0 auto",padding:"20px 16px 60px"}}>
 
-        {/* APT LIST */}
         {view==="apt"&&(
           <div className="page">
             {showAddApt&&<AddForm title="새 아파트 추가" onCancel={()=>setShowAddApt(false)} onAdd={addApt} fields={[{key:"name",placeholder:"예: 래미안 반포",required:true,large:true},{key:"address",placeholder:"주소 (선택)"}]}/>}
@@ -284,7 +364,6 @@ function App(){
           </div>
         )}
 
-        {/* BUILDING LIST */}
         {view==="building"&&selApt&&(
           <div className="page">
             <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"12px 16px",marginBottom:12}}>
@@ -323,7 +402,6 @@ function App(){
           </div>
         )}
 
-        {/* UNIT LIST */}
         {view==="unit"&&selBld&&(
           <div className="page">
             <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"12px 16px",marginBottom:12}}>
@@ -361,7 +439,6 @@ function App(){
           </div>
         )}
 
-        {/* UNIT DETAIL */}
         {view==="unit_detail"&&selUnit&&(
           <div className="page">
             <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"16px 18px",marginBottom:10}}>
@@ -402,22 +479,41 @@ function App(){
                 );
               })():<div style={{fontSize:13,color:MUTED,marginBottom:14}}>아직 가격이 기록되지 않았습니다</div>}
 
-              {selUnit.url?(
-                <a href={selUnit.url} target="_blank" rel="noreferrer" style={{textDecoration:"none",display:"block"}}>
-                  <div style={{background:"#0D2B1A",border:`1px solid ${ACCENT}55`,borderRadius:7,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                    <div>
-                      <div style={{fontSize:12,color:ACCENT,fontWeight:700,marginBottom:2}}>① 네이버 부동산에서 가격 확인</div>
-                      <div style={{fontSize:11,color:MUTED}}>확인 후 돌아와서 아래에 입력하세요</div>
-                    </div>
-                    <span style={{fontSize:20,color:ACCENT}}>↗</span>
+              {editingUrl?(
+                <div style={{marginBottom:4}}>
+                  <input autoFocus value={editUrlVal} onChange={e=>setEditUrlVal(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")saveUrl();if(e.key==="Escape")setEditingUrl(false);}}
+                    placeholder="네이버 부동산 URL 입력"
+                    style={{width:"100%",...IS({padding:"10px 12px",fontSize:12}),border:`2px solid ${ACCENT}`,marginBottom:6}}/>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={saveUrl} style={{flex:1,background:ACCENT,color:"#050F05",border:"none",borderRadius:5,padding:"8px",fontWeight:700,fontSize:12,cursor:"pointer"}}>저장</button>
+                    <button onClick={()=>setEditingUrl(false)} style={{padding:"8px 14px",background:"none",border:`1px solid ${BORDER}`,borderRadius:5,color:MUTED,fontSize:12,cursor:"pointer"}}>취소</button>
                   </div>
-                </a>
+                </div>
+              ):selUnit.url?(
+                <div style={{display:"flex",gap:6,alignItems:"stretch"}}>
+                  <a href={selUnit.url} target="_blank" rel="noreferrer" style={{textDecoration:"none",flex:1}}>
+                    <div style={{background:"#0D2B1A",border:`1px solid ${ACCENT}55`,borderRadius:7,padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",height:"100%"}}>
+                      <div>
+                        <div style={{fontSize:12,color:ACCENT,fontWeight:700,marginBottom:2}}>① 네이버 부동산에서 가격 확인</div>
+                        <div style={{fontSize:11,color:MUTED}}>확인 후 돌아와서 아래에 입력하세요</div>
+                      </div>
+                      <span style={{fontSize:20,color:ACCENT}}>↗</span>
+                    </div>
+                  </a>
+                  <button onClick={()=>{setEditUrlVal(selUnit.url);setEditingUrl(true);}}
+                    style={{background:"none",border:`1px solid ${BORDER}`,borderRadius:7,padding:"0 12px",color:MUTED,fontSize:11,cursor:"pointer",flexShrink:0}}>
+                    수정
+                  </button>
+                </div>
               ):(
-                <div style={{background:"#1A1A1A",border:`1px dashed ${BORDER}`,borderRadius:7,padding:"11px 16px",fontSize:12,color:MUTED}}>등록된 네이버 URL이 없습니다</div>
+                <button onClick={()=>{setEditUrlVal("");setEditingUrl(true);}}
+                  style={{width:"100%",background:"#1A1A1A",border:`1px dashed ${BORDER}`,borderRadius:7,padding:"12px 16px",fontSize:12,color:MUTED,cursor:"pointer",textAlign:"left"}}>
+                  + 네이버 부동산 URL 추가
+                </button>
               )}
             </div>
 
-            {/* 가격 입력 */}
             <div style={{background:"#0D2010",border:`1px solid ${ACCENT}44`,borderRadius:8,padding:"16px 18px",marginBottom:10}}>
               <div className="mono" style={{fontSize:10,color:ACCENT,letterSpacing:"0.15em",marginBottom:12}}>② 오늘 확인한 가격 입력</div>
               <div style={{display:"flex",gap:8,marginBottom:8}}>
@@ -453,7 +549,6 @@ function App(){
               </div>
             </div>
 
-            {/* 차트 */}
             {selUnit.prices.length>=2&&(
               <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,padding:"16px 18px 10px",marginBottom:10}}>
                 <div className="mono" style={{fontSize:10,color:MUTED,letterSpacing:"0.15em",marginBottom:8}}>가격 추이</div>
@@ -465,7 +560,6 @@ function App(){
               </div>
             )}
 
-            {/* 가격 이력 */}
             <div style={{background:CARD,border:`1px solid ${BORDER}`,borderRadius:8,overflow:"hidden"}}>
               <div style={{padding:"12px 18px",borderBottom:`1px solid ${BORDER}`,display:"flex",justifyContent:"space-between"}}>
                 <span className="mono" style={{fontSize:10,color:MUTED,letterSpacing:"0.15em"}}>가격 이력</span>
@@ -497,7 +591,6 @@ function App(){
         )}
       </div>
 
-      {/* 삭제 확인 모달 */}
       {confirmDel&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",zIndex:300,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
           <div style={{background:"#141814",border:`1px solid ${BORDER}`,borderRadius:12,padding:"24px 24px 20px",maxWidth:320,width:"100%"}}>
